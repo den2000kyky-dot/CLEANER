@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-clean_cheats.py
+site.py
 
 Простой инструмент для очистки компьютера от следов читерских клиентов
-для Minecraft (Doomsday и похожие). Делает три вещи:
+для Minecraft (Doomsday и похожие). Делает так:
 
-1. Показывает окно с выбором установленной Java (просто для подтверждения
-   "начать очистку" — реальный запуск игры этот скрипт не трогает).
-2. Ищет и удаляет папки/файлы, процессы, записи реестра, связанные с
-   известными читерскими клиентами, по маскам имён.
+1. Показывает окно со списком уже ЗАПУЩЕННЫХ процессов Minecraft
+   (java.exe/javaw.exe с "minecraft"/"forge"/"fabric" в командной строке
+   или заголовке окна). Ты выбираешь нужный из списка.
+2. По кнопке «Очистить читы» ищет и удаляет папки/файлы, процессы,
+   записи реестра, связанные с известными читерскими клиентами, по
+   маскам имён (сам выбранный процесс Minecraft не трогает).
 3. Чистит Prefetch (Windows пересоздаёт его сам, это безопасно).
 
 Работает только на Windows. Для чистки реестра и Prefetch скрипт нужно
@@ -16,7 +18,7 @@ clean_cheats.py
 пропустятся с предупреждением.
 
 Использование:
-    python clean_cheats.py
+    python site.py
 """
 
 import os
@@ -61,80 +63,57 @@ def is_admin() -> bool:
         return False
 
 
-def find_java_installations():
-    """Находит установленные Java: по PATH, стандартным папкам и реестру."""
-    found = set()
+def find_running_minecraft():
+    """
+    Находит уже ЗАПУЩЕННЫЕ процессы Minecraft (java.exe / javaw.exe) и
+    возвращает список словарей: {pid, name, title, cmdline}.
 
-    # 1. JAVA_HOME / PATH
-    java_home = os.environ.get("JAVA_HOME")
-    if java_home and os.path.isdir(java_home):
-        found.add(java_home)
-
-    # where java (через PATH)
+    Берём через PowerShell + Win32_Process, чтобы получить и PID, и
+    командную строку (по ней видно, что это именно Minecraft — путь к
+    .minecraft, к версии, к лаунчеру и т.п.), и заголовок окна.
+    """
+    ps_script = (
+        "$procs = Get-CimInstance Win32_Process | "
+        "Where-Object { $_.Name -match '^java(w)?\\.exe$' }; "
+        "$result = foreach ($p in $procs) { "
+        "  $title = ''; "
+        "  try { $gp = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue; "
+        "        if ($gp) { $title = $gp.MainWindowTitle } } catch {}; "
+        "  [PSCustomObject]@{ Pid = $p.ProcessId; Name = $p.Name; "
+        "                      Title = $title; CommandLine = $p.CommandLine } "
+        "}; "
+        "$result | ConvertTo-Json -Compress"
+    )
     try:
-        out = subprocess.run(["where", "java"], capture_output=True, text=True, timeout=5)
-        for line in out.stdout.splitlines():
-            line = line.strip()
-            if line.lower().endswith("java.exe"):
-                found.add(os.path.dirname(os.path.dirname(line)))
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+            capture_output=True, text=True, timeout=15,
+        )
+        raw = out.stdout.strip()
+        if not raw:
+            return []
+        import json
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            data = [data]
+        procs = []
+        for item in data:
+            cmdline = item.get("CommandLine") or ""
+            title = item.get("Title") or ""
+            # Оставляем только то, что реально похоже на Minecraft:
+            # в командной строке упоминается minecraft, .minecraft, launcher и т.п.,
+            # либо заголовок окна содержит "Minecraft".
+            haystack = (cmdline + " " + title).lower()
+            if "minecraft" in haystack or "forge" in haystack or "fabric" in haystack:
+                procs.append({
+                    "pid": item.get("Pid"),
+                    "name": item.get("Name"),
+                    "title": title.strip(),
+                    "cmdline": cmdline.strip(),
+                })
+        return procs
     except Exception:
-        pass
-
-    # 2. Стандартные папки установки
-    standard_dirs = [
-        r"C:\Program Files\Java",
-        r"C:\Program Files (x86)\Java",
-        r"C:\Program Files\Eclipse Adoptium",
-        r"C:\Program Files\Microsoft\jdk-*",
-    ]
-    for base in standard_dirs:
-        base_dir = base.replace("*", "")
-        parent = os.path.dirname(base_dir) if "*" in base else base
-        if os.path.isdir(parent):
-            try:
-                for name in os.listdir(parent):
-                    full = os.path.join(parent, name)
-                    if os.path.isdir(full) and "jdk" in name.lower() or "jre" in name.lower() or "java" in name.lower():
-                        found.add(full)
-            except Exception:
-                pass
-
-    # 3. Реестр (JavaSoft)
-    try:
-        import winreg
-        reg_paths = [
-            r"SOFTWARE\JavaSoft\Java Runtime Environment",
-            r"SOFTWARE\JavaSoft\JDK",
-            r"SOFTWARE\Eclipse Adoptium\JRE",
-            r"SOFTWARE\Eclipse Adoptium\JDK",
-        ]
-        for rp in reg_paths:
-            try:
-                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, rp) as key:
-                    i = 0
-                    while True:
-                        try:
-                            version = winreg.EnumKey(key, i)
-                            with winreg.OpenKey(key, version) as vkey:
-                                try:
-                                    java_home_val, _ = winreg.QueryValueEx(vkey, "JavaHome")
-                                    found.add(java_home_val)
-                                except FileNotFoundError:
-                                    pass
-                            i += 1
-                        except OSError:
-                            break
-            except FileNotFoundError:
-                pass
-    except ImportError:
-        pass
-
-    results = []
-    for path in found:
-        exe = os.path.join(path, "bin", "java.exe")
-        if os.path.isfile(exe):
-            results.append((path, exe))
-    return sorted(set(results))
+        return []
 
 
 def log(widget, text):
@@ -297,9 +276,14 @@ def clean_prefetch(widget):
     log(widget, "    (Windows пересоздаст эти файлы сама в процессе обычной работы — это нормально.)")
 
 
-def run_cleanup(widget, java_path):
+def run_cleanup(widget, mc_proc):
     log(widget, "=" * 50)
-    log(widget, f"Выбранная Java: {java_path}")
+    if mc_proc:
+        log(widget, f"Выбран процесс Minecraft: PID {mc_proc['pid']} ({mc_proc['name']})")
+        if mc_proc.get("title"):
+            log(widget, f"    окно: {mc_proc['title']}")
+    else:
+        log(widget, "Процесс Minecraft не выбран — очистка всё равно продолжится.")
     if not is_admin():
         log(widget, "[!] Скрипт запущен БЕЗ прав администратора.")
         log(widget, "    Очистка файлов и процессов пройдёт, но реестр и Prefetch")
@@ -318,22 +302,23 @@ def run_cleanup(widget, java_path):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Очистка читов — выбор Java")
-        self.geometry("640x480")
+        self.title("Очистка читов — выбор Minecraft")
+        self.geometry("640x520")
         self.resizable(False, False)
 
-        tk.Label(self, text="Выбери установленную Java для запуска Minecraft:",
+        tk.Label(self, text="Запущенные процессы Minecraft (выбери нужный):",
                  font=("Segoe UI", 11)).pack(pady=(15, 5))
 
-        self.java_list = find_java_installations()
-        self.combo = ttk.Combobox(self, width=80, state="readonly")
-        if self.java_list:
-            self.combo["values"] = [f"{path}" for path, _ in self.java_list]
-            self.combo.current(0)
-        else:
-            self.combo["values"] = ["Java не найдена автоматически"]
-            self.combo.current(0)
-        self.combo.pack(pady=5)
+        top_frame = tk.Frame(self)
+        top_frame.pack(pady=5)
+
+        self.combo = ttk.Combobox(top_frame, width=68, state="readonly")
+        self.combo.pack(side=tk.LEFT, padx=(0, 5))
+
+        tk.Button(top_frame, text="Обновить", command=self.refresh_list).pack(side=tk.LEFT)
+
+        self.mc_list = []
+        self.refresh_list()
 
         self.clean_btn = tk.Button(self, text="Очистить читы", bg="#c0392b", fg="white",
                                     font=("Segoe UI", 11, "bold"), command=self.on_clean)
@@ -346,16 +331,35 @@ class App(tk.Tk):
             log(self.log_widget, "[i] Совет: запусти скрипт от имени администратора,")
             log(self.log_widget, "    чтобы очистка реестра и Prefetch тоже сработала.")
 
+    def refresh_list(self):
+        self.mc_list = find_running_minecraft()
+        if self.mc_list:
+            values = []
+            for p in self.mc_list:
+                label = f"PID {p['pid']} — {p['name']}"
+                if p.get("title"):
+                    label += f" — {p['title']}"
+                values.append(label)
+            self.combo["values"] = values
+            self.combo.current(0)
+        else:
+            self.combo["values"] = ["Minecraft не запущен — запусти игру и нажми «Обновить»"]
+            self.combo.current(0)
+
     def on_clean(self):
-        if not self.java_list:
-            messagebox.showwarning("Java не найдена", "Автоматически Java не найдена, но очистка всё равно продолжится.")
-            java_path = "не определено"
+        if not self.mc_list:
+            messagebox.showwarning(
+                "Minecraft не найден",
+                "Запущенный Minecraft не обнаружен. Запусти игру и нажми «Обновить»,\n"
+                "либо продолжи — очистка всё равно сработает."
+            )
+            mc_proc = None
         else:
             idx = self.combo.current()
-            java_path = self.java_list[idx][0]
+            mc_proc = self.mc_list[idx]
 
         self.clean_btn.config(state="disabled")
-        run_cleanup(self.log_widget, java_path)
+        run_cleanup(self.log_widget, mc_proc)
         self.clean_btn.config(state="normal")
 
 
