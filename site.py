@@ -6,13 +6,38 @@ from pathlib import Path
 import winreg
 import shutil
 
-NAMES = [
-    "doomsday", "wurst", "meteor", "impact",
-    "aristois", "future", "liquidbounce",
-    "rusherhack", "inertia", "bleach",
-    "sigma", "novoline", "rise"
-]
 
+NAMES = [
+    "rockstar", "wildclient", "lunex",
+    "impact", "wurst", "bleachhack", "aristois",
+    "huzuni", "skillclient", "inertia", "ares",
+    "sigma", "meteor", "liquidbounce", "nurik",
+    "nursultan", "celestial", "calestial", "celka",
+    "expensive", "neverhook", "excellent", "wexside",
+    "minced", "deadcode", "akrien", "jigsaw",
+    "future", "jessica", "dreampool", "norules",
+    "konas", "richclient", "rusherhack", "thunderhack",
+    "moonhack", "doomsday", "nightware", "ricardo",
+    "extazyy", "troxill", "antileak", "arbuz",
+    ".akr", ".wex", "dauntiblyat", "rename_me_please",
+    "editme", "takker", "fuzeclient", "wisefolder",
+    "flauncher", "vec.dll", "usboblivion.exe",
+    "delta", "venus", "spambot", "cleancut",
+    "spam_bot", "inventory_walk", "player_highlighter",
+    "aimbot", "freecam", "bedrock_breaker_mode",
+    "double_hotbar", "elytra_swap", "armor_hotswap",
+    "smart_moving", "savesearcher", "topkautobuy",
+    "topkaautobuy", "mob_hitbox", "librarian_trade_finder",
+    "sacurachorusfind", "autoattack", "entity_outliner",
+    "invmove", "hitbox", "elytrahack", "diamondsim",
+    "forgehax", "clientcommands", "control-tweaks",
+    "swingthroughgrass", "cutthrough", "haruka",
+    "newlauncher", "blade", "hachclient", "flug er",
+    "exloader", "catlean", "dauntiblyat",
+    "tweakeroo", "chest", "baritone", "viaversion",
+    "viabackwards", "viarewind", "viafabric",
+    "viaforge", "viaproxy", "vialoader", "viamcp"
+]
 def scan():
     results.delete(*results.get_children())
     locations = [
